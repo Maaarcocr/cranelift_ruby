@@ -8,6 +8,7 @@ use std::convert::TryInto;
 use std::num::TryFromIntError;
 
 use cranelift::codegen::binemit::{NullStackMapSink, NullTrapSink};
+use cranelift::codegen::ir::{Inst, SigRef};
 use cranelift::codegen::settings::{self, Configurable};
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -151,7 +152,7 @@ fn make_function_impl(
     let mut func_ctx = FunctionBuilderContext::new();
     ctx.func.signature = signature.clone();
     ctx.func.name = ExternalName::user(0, func.as_u32());
-    ctx.set_disasm(true);
+    // ctx.set_disasm(true);
     let bcx: FunctionBuilder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
     let cranelift_bcx: AnyObject = Class::from_existing("CraneliftRuby")
         .get_nested_class("CraneliftFunctionBuilder")
@@ -164,7 +165,7 @@ fn make_function_impl(
         .module
         .define_function(func, &mut ctx, &mut trap_sink, &mut stack_map_sink)
         .map_err(|e| AnyException::new("StandardError", Some(&format!("{:?}", e))))?;
-    println!("code: {}", ctx.mach_compile_result.unwrap().disasm.unwrap());
+    // println!("code: {}", ctx.mach_compile_result.unwrap().disasm.unwrap());
     Ok(func.as_u32())
 }
 
@@ -239,6 +240,39 @@ methods!(
         let param = bcx.block_params(*block)[index.to_u64() as usize];
         Integer::new(param.as_u32().into())
     },
+    fn import_signature(signature: AnyObject) -> AnyObject {
+        let bcx = itself.get_data_mut(&*FUNCTION_BUILDER_WRAPPER);
+
+        let signature = signature.map_err(|e| VM::raise_ex(e)).unwrap();
+        let signature = signature.get_data(&*SIGNATURE_WRAPPER);
+        let sigref = bcx.import_signature(signature.clone());
+        Class::from_existing("CraneliftRuby")
+            .get_nested_class("SigRef")
+            .wrap_data(sigref, &*SIGREF_WRAPPER)
+    }
+    fn call_indirect(sigref: AnyObject, callee: Integer, args: Array) -> Integer {
+        let bcx = itself.get_data_mut(&*FUNCTION_BUILDER_WRAPPER);
+
+        let sigref = sigref.map_err(|e| VM::raise_ex(e)).unwrap();
+        let sigref = sigref.get_data(&*SIGREF_WRAPPER);
+        let callee = callee.map_err(|e| VM::raise_ex(e)).unwrap();
+        let callee = from_integer_to_value(callee).map_err(|e| VM::raise_ex(e)).unwrap();
+        let args = args.map_err(|e| VM::raise_ex(e)).unwrap();
+        let args = from_array_to_values(args).map_err(|e| VM::raise_ex(e)).unwrap();
+        let res = bcx.ins().call_indirect(*sigref, callee, &args);
+        Integer::new(res.as_u32().into())
+    }
+    fn inst_results(inst: Integer) -> Array {
+        let mut result = Array::new();
+        let bcx = itself.get_data_mut(&*FUNCTION_BUILDER_WRAPPER);
+        let inst = inst.map_err(|e| VM::raise_ex(e)).unwrap();
+        let inst = from_integer_to_inst(inst).map_err(|e| VM::raise_ex(e)).unwrap();
+        let values = bcx.inst_results(inst);
+        for value in values {
+            result.push(Integer::new(value.as_u32().into()));
+        }
+        result
+    }
     fn iconst(ty: Symbol, value: Integer) -> Integer {
         let bcx = itself.get_data_mut(&*FUNCTION_BUILDER_WRAPPER);
         let ty = ty.map_err(|e| VM::raise_ex(e)).unwrap();
@@ -464,6 +498,12 @@ fn from_integer_to_value(i: Integer) -> Result<Value, AnyException> {
     })?))
 }
 
+fn from_integer_to_inst(i: Integer) -> Result<Inst, AnyException> {
+    Ok(Inst::from_u32(i.to_i32().try_into().map_err(|_e| {
+        AnyException::new("StandardError", Some("Could not conver int to u32"))
+    })?))
+}
+
 fn from_array_to_values(array: Array) -> Result<Vec<Value>, AnyException> {
     let mut return_values: Vec<Value> = Vec::new();
     for value in array {
@@ -477,6 +517,8 @@ fn from_array_to_values(array: Array) -> Result<Vec<Value>, AnyException> {
 }
 
 wrappable_struct!(Variable, VariableWrapper, VARIABLE_WRAPPER);
+wrappable_struct!(SigRef, SigRefWrapper, SIGREF_WRAPPER);
+
 
 class!(CraneliftVariable);
 
@@ -518,6 +560,7 @@ pub extern "C" fn Init_cranelift_ruby() {
                 klass.def("get_function_pointer", get_function_pointer);
             });
         itself.define_nested_class("Signature", Some(&data_class));
+        itself.define_nested_class("SigRef", Some(&data_class));
         itself.define_nested_class("Block", Some(&data_class));
         itself
             .define_nested_class("Variable", Some(&data_class))
@@ -548,6 +591,9 @@ pub extern "C" fn Init_cranelift_ruby() {
                 klass.def("def_var", def_var);
                 klass.def("use_var", use_var);
                 klass.def("icmp", icmp);
+                klass.def("import_signature", import_signature);
+                klass.def("call_indirect", call_indirect);
+                klass.def("inst_results", inst_results);
             });
     });
 }
