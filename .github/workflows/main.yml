@@ -7,10 +7,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
+    - name: Install latest nightly
+      uses: actions-rs/toolchain@v1
+      with:
+          toolchain: stable
+          override: true
     - name: Set up Ruby
       uses: ruby/setup-ruby@v1
       with:
-        ruby-version: 2.6.3
+        ruby-version: 3.0
         bundler-cache: true
     - name: Run the default task
       run: bundle exec rake
