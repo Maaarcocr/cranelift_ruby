@@ -160,7 +160,7 @@ fn make_function_impl(
     callback.call(&[cranelift_bcx]);
     let mut trap_sink = NullTrapSink {};
     let mut stack_map_sink = NullStackMapSink {};
-    println!("{}", ctx.func.display(None).to_string());
+    // println!("{}", ctx.func.display(None).to_string());
     builder
         .module
         .define_function(func, &mut ctx, &mut trap_sink, &mut stack_map_sink)
