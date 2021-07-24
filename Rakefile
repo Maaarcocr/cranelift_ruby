@@ -34,4 +34,4 @@ Rake::TestTask.new(test_clean: %i[tidy_up bundle_install build_lib]) do |t|
   t.test_files = FileList["test/**/*_test.rb"]
 end
 
-task default: :test_clean
+task default: :build_lib
