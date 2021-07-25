@@ -591,6 +591,7 @@ pub extern "C" fn Init_cranelift_ruby() {
                 klass.def("def_var", def_var);
                 klass.def("use_var", use_var);
                 klass.def("icmp", icmp);
+                klass.def("select", select);
                 klass.def("import_signature", import_signature);
                 klass.def("call_indirect", call_indirect);
                 klass.def("inst_results", inst_results);
