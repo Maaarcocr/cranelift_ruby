@@ -4,6 +4,7 @@ extern crate rutie;
 #[macro_use]
 extern crate lazy_static;
 
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::num::TryFromIntError;
 
@@ -22,6 +23,7 @@ class!(Cranelift);
 
 pub struct Builder {
     pub module: JITModule,
+    pub funcs_sizes: HashMap<u32, u32>,
 }
 
 impl Builder {
@@ -35,6 +37,7 @@ impl Builder {
         let isa = isa_builder.finish(settings::Flags::new(flag_builder));
         Ok(Self {
             module: JITModule::new(JITBuilder::with_isa(isa, default_libcall_names())),
+            funcs_sizes: HashMap::new(),
         })
     }
 }
@@ -72,9 +75,10 @@ methods!(
         let signature = signature.map_err(|e| VM::raise_ex(e)).unwrap();
         let signature = signature.get_data(&*SIGNATURE_WRAPPER);
         let callback = callback.map_err(|e| VM::raise_ex(e)).unwrap();
-        let func_id = make_function_impl(name.to_str(), signature, callback, builder)
+        let (func_id, func_size) = make_function_impl(name.to_str(), signature, callback, builder)
             .map_err(|e| VM::raise_ex(e))
             .unwrap();
+        builder.funcs_sizes.insert(func_id, func_size);
         Integer::new(func_id.into())
     },
     fn finalize() -> NilClass {
@@ -97,6 +101,30 @@ methods!(
             .unwrap();
         let func_id = FuncId::new(func_id);
         Integer::new(builder.module.get_finalized_function(func_id) as i64)
+    },
+    fn get_function_size(func_id: Integer) -> Integer {
+        let builder = itself.get_data_mut(&*BUILDER_WRAPPER);
+        let func_id = func_id.map_err(|e| VM::raise_ex(e)).unwrap();
+        let func_id = func_id
+            .to_i64()
+            .try_into()
+            .map_err(|_e| {
+                VM::raise_ex(AnyException::new(
+                    "StandardError",
+                    Some("Could create function id due to bad conversion"),
+                ))
+            })
+            .unwrap();
+        Integer::new(
+            (*builder.funcs_sizes.get(&func_id).unwrap_or_else(|| {
+                VM::raise_ex(AnyException::new(
+                    "StandardError",
+                    Some("Could create function id due to bad conversion"),
+                ));
+                &0
+            }))
+            .into(),
+        )
     }
 );
 
@@ -143,7 +171,7 @@ fn make_function_impl(
     signature: &Signature,
     callback: Proc,
     builder: &mut Builder,
-) -> Result<u32, AnyException> {
+) -> Result<(u32, u32), AnyException> {
     let func = builder
         .module
         .declare_function(name, Linkage::Local, &signature)
@@ -152,7 +180,6 @@ fn make_function_impl(
     let mut func_ctx = FunctionBuilderContext::new();
     ctx.func.signature = signature.clone();
     ctx.func.name = ExternalName::user(0, func.as_u32());
-    // ctx.set_disasm(true);
     let bcx: FunctionBuilder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
     let cranelift_bcx: AnyObject = Class::from_existing("CraneliftRuby")
         .get_nested_class("CraneliftFunctionBuilder")
@@ -160,13 +187,12 @@ fn make_function_impl(
     callback.call(&[cranelift_bcx]);
     let mut trap_sink = NullTrapSink {};
     let mut stack_map_sink = NullStackMapSink {};
-    // println!("{}", ctx.func.display(None).to_string());
-    builder
+    let f = builder
         .module
         .define_function(func, &mut ctx, &mut trap_sink, &mut stack_map_sink)
         .map_err(|e| AnyException::new("StandardError", Some(&format!("{:?}", e))))?;
     // println!("code: {}", ctx.mach_compile_result.unwrap().disasm.unwrap());
-    Ok(func.as_u32())
+    Ok((func.as_u32(), f.size))
 }
 
 wrappable_struct!(Signature, SignatureWrapper, SIGNATURE_WRAPPER);
@@ -249,30 +275,36 @@ methods!(
         Class::from_existing("CraneliftRuby")
             .get_nested_class("SigRef")
             .wrap_data(sigref, &*SIGREF_WRAPPER)
-    }
+    },
     fn call_indirect(sigref: AnyObject, callee: Integer, args: Array) -> Integer {
         let bcx = itself.get_data_mut(&*FUNCTION_BUILDER_WRAPPER);
 
         let sigref = sigref.map_err(|e| VM::raise_ex(e)).unwrap();
         let sigref = sigref.get_data(&*SIGREF_WRAPPER);
         let callee = callee.map_err(|e| VM::raise_ex(e)).unwrap();
-        let callee = from_integer_to_value(callee).map_err(|e| VM::raise_ex(e)).unwrap();
+        let callee = from_integer_to_value(callee)
+            .map_err(|e| VM::raise_ex(e))
+            .unwrap();
         let args = args.map_err(|e| VM::raise_ex(e)).unwrap();
-        let args = from_array_to_values(args).map_err(|e| VM::raise_ex(e)).unwrap();
+        let args = from_array_to_values(args)
+            .map_err(|e| VM::raise_ex(e))
+            .unwrap();
         let res = bcx.ins().call_indirect(*sigref, callee, &args);
         Integer::new(res.as_u32().into())
-    }
+    },
     fn inst_results(inst: Integer) -> Array {
         let mut result = Array::new();
         let bcx = itself.get_data_mut(&*FUNCTION_BUILDER_WRAPPER);
         let inst = inst.map_err(|e| VM::raise_ex(e)).unwrap();
-        let inst = from_integer_to_inst(inst).map_err(|e| VM::raise_ex(e)).unwrap();
+        let inst = from_integer_to_inst(inst)
+            .map_err(|e| VM::raise_ex(e))
+            .unwrap();
         let values = bcx.inst_results(inst);
         for value in values {
             result.push(Integer::new(value.as_u32().into()));
         }
         result
-    }
+    },
     fn iconst(ty: Symbol, value: Integer) -> Integer {
         let bcx = itself.get_data_mut(&*FUNCTION_BUILDER_WRAPPER);
         let ty = ty.map_err(|e| VM::raise_ex(e)).unwrap();
@@ -546,7 +578,6 @@ fn from_array_to_values(array: Array) -> Result<Vec<Value>, AnyException> {
 
 wrappable_struct!(Variable, VariableWrapper, VARIABLE_WRAPPER);
 wrappable_struct!(SigRef, SigRefWrapper, SIGREF_WRAPPER);
-
 
 class!(CraneliftVariable);
 
