@@ -343,6 +343,34 @@ methods!(
         let res = bcx.ins().iadd(x, y);
         Integer::new(res.as_u32().into())
     },
+    fn band(x: Integer, y: Integer) -> Integer {
+        let bcx = itself.get_data_mut(&*FUNCTION_BUILDER_WRAPPER);
+        let x = x.map_err(|e| VM::raise_ex(e)).unwrap();
+        let x = from_integer_to_value(x)
+            .map_err(|e| VM::raise_ex(e))
+            .unwrap();
+        let y = y.map_err(|e| VM::raise_ex(e)).unwrap();
+        let y = from_integer_to_value(y)
+            .map_err(|e| VM::raise_ex(e))
+            .unwrap();
+
+        let res = bcx.ins().band(x, y);
+        Integer::new(res.as_u32().into())
+    },
+    fn bor(x: Integer, y: Integer) -> Integer {
+        let bcx = itself.get_data_mut(&*FUNCTION_BUILDER_WRAPPER);
+        let x = x.map_err(|e| VM::raise_ex(e)).unwrap();
+        let x = from_integer_to_value(x)
+            .map_err(|e| VM::raise_ex(e))
+            .unwrap();
+        let y = y.map_err(|e| VM::raise_ex(e)).unwrap();
+        let y = from_integer_to_value(y)
+            .map_err(|e| VM::raise_ex(e))
+            .unwrap();
+
+        let res = bcx.ins().bor(x, y);
+        Integer::new(res.as_u32().into())
+    },
     fn return_(values: Array) -> NilClass {
         let bcx = itself.get_data_mut(&*FUNCTION_BUILDER_WRAPPER);
         let values = values.map_err(|e| VM::raise_ex(e)).unwrap();
@@ -595,6 +623,8 @@ pub extern "C" fn Init_cranelift_ruby() {
                 klass.def("import_signature", import_signature);
                 klass.def("call_indirect", call_indirect);
                 klass.def("inst_results", inst_results);
+                klass.def("band", band);
+                klass.def("bor", bor);
             });
     });
 }
