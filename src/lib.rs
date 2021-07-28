@@ -617,6 +617,7 @@ pub extern "C" fn Init_cranelift_ruby() {
                 klass.def("make_function", make_function);
                 klass.def("finalize", finalize);
                 klass.def("get_function_pointer", get_function_pointer);
+                klass.def("get_function_size", get_function_size);
             });
         itself.define_nested_class("Signature", Some(&data_class));
         itself.define_nested_class("SigRef", Some(&data_class));
